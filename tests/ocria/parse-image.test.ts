@@ -20,7 +20,7 @@ import { parseImage } from "../../src/ocria/pipeline/parse-image.js";
 import { tableNetFromOnnx } from "../../src/ocria/table-model/index.js";
 import { ModelLoader } from "../../src/core/model-loader.js";
 import { NodePlatformProvider } from "../../src/processor/platform.node.js";
-import { PAGES_DIR, pagePixels } from "./ocr-golden.js";
+import { EXACT_OCR, PAGES_DIR, pagePixels } from "./ocr-golden.js";
 import { canon, loadParseGolden, parseGoldenNames } from "./parse-golden.js";
 
 let models: ParseModels;
@@ -54,7 +54,8 @@ beforeAll(async () => {
 const images = parseGoldenNames().filter((n) => loadParseGolden(n).image.endsWith(".png"));
 
 describe.each(images)("%s", (name) => {
-  test("markdown and page", async () => {
+  // recognizer output is exact only on the recording platform (EXACT_OCR)
+  test.if(EXACT_OCR)("markdown and page", async () => {
     const g = loadParseGolden(name);
     const bytes = new Uint8Array(readFileSync(join(PAGES_DIR, g.image)));
     const got = await parseImage(models, await pagePixels(g.image), {

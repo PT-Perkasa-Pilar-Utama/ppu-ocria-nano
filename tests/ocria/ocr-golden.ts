@@ -20,6 +20,36 @@ import { rgbaToRgb } from "../../src/ocria/ocr/pixels.js";
 import { NodePlatformProvider } from "../../src/processor/platform.node.js";
 import type { OcrResult } from "../../src/ocria/ocr/types.js";
 
+/**
+ * Whether this host reproduces the goldens' recognizer output exactly. The
+ * goldens were recorded on macOS arm64 (an Apple M1). rec_latin.onnx is int8
+ * (QDQ), and ONNX Runtime's int8 kernels on x86-64 round differently, which
+ * changes some characters on Linux CI (run 45590617365: 24 tests, e.g.
+ * "morning" read as "moning"). LiteParse on that host reads the same way.
+ * Detection, line crops, routing decisions and every stage fed a recorded
+ * input stay exact on every host; the CI parity job runs the rest on macOS
+ * arm64. OCRIA_EXACT_OCR=1 or 0 overrides the platform check.
+ */
+export const EXACT_OCR: boolean =
+  process.env.OCRIA_EXACT_OCR === undefined
+    ? process.platform === "darwin" && process.arch === "arm64"
+    : process.env.OCRIA_EXACT_OCR === "1";
+
+/** 1 - Levenshtein distance / longer length, over UTF-16 code units. */
+export function textSimilarity(a: string, b: string): number {
+  if (a.length === 0 && b.length === 0) return 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const sub = (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1);
+      row.push(Math.min((prev[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, sub));
+    }
+    prev = row;
+  }
+  return 1 - (prev[b.length] ?? 0) / Math.max(a.length, b.length);
+}
+
 export const GOLDEN_DIR: string = join(import.meta.dir, "../fixtures/golden/ocr");
 export const PAGES_DIR: string = join(import.meta.dir, "../fixtures/pages");
 

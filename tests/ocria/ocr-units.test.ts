@@ -13,6 +13,7 @@ import { rot90 } from "../../src/ocria/ocr/img.js";
 import { readingFrame } from "../../src/ocria/ocr/page.js";
 import { cleanLatin, isShortToken } from "../../src/ocria/ocr/scripts.js";
 import { bicubicTab } from "../../src/ocria/ocr/warp.js";
+import { textSimilarity } from "./ocr-golden.js";
 
 describe("img.rs", () => {
   test("rot90 matches numpy", () => {
@@ -140,5 +141,15 @@ describe("page.rs", () => {
     const r = readingFrame(q, false, true, 100);
     expect(r[0]).toEqual([99, 0]);
     expect(r[1]).toEqual([99, 10]);
+  });
+});
+
+describe("textSimilarity (test helper)", () => {
+  test("is one minus the edit distance over the longer length", () => {
+    expect(textSimilarity("", "")).toBe(1);
+    expect(textSimilarity("abc", "abc")).toBe(1);
+    expect(textSimilarity("every morning", "every moning")).toBeCloseTo(12 / 13, 12);
+    expect(textSimilarity("kitten", "sitting")).toBeCloseTo(4 / 7, 12);
+    expect(textSimilarity("abc", "")).toBe(0);
   });
 });

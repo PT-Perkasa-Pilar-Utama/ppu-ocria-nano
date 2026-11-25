@@ -123,6 +123,51 @@ jobs:
       - name: Serve - type check
         run: cd apps/serve && bun run type-check
 
+  # The goldens record LiteParse on macOS arm64 (an Apple M1). rec_latin.onnx
+  # is int8, and ONNX Runtime's x86-64 int8 kernels read some characters
+  # differently, so the job above skips the goldens that depend on recognizer
+  # output (EXACT_OCR in tests/ocria/ocr-golden.ts) and this job runs them
+  # exactly. macos-latest runners are Apple silicon.
+  parity:
+    name: Golden parity (macOS arm64)
+    runs-on: macos-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Cache pdfium build inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ppu-ocria-nano-pdfium
+          key: pdfium-${{ runner.os }}-${{ hashFiles('scripts/pdfium/*') }}
+
+      - name: Build pdfium wasm
+        run: bash scripts/pdfium/build.sh
+
+      - name: Cache OCRia-nano-1 models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ppu-ocria-nano
+          key: ocria-nano-models-${{ runner.os }}-${{ hashFiles('src/model-catalogue.ts') }}
+
+      - name: Warm model cache
+        run: bun scripts/warm-test-models.ts
+
+      # OCRIA_EXACT_OCR=1 fails the job, instead of skipping tests, if the
+      # runner is ever not the recording platform.
+      - name: Run golden tests
+        env:
+          OCRIA_EXACT_OCR: "1"
+        run: bun test ./tests/ocria ./tests/pdf-entry.test.ts ./tests/service.test.ts
+
   sca:
     name: SCA (dependency vulnerabilities)
     runs-on: ubuntu-latest

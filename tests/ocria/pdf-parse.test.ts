@@ -17,13 +17,17 @@ import { pageInputRaster } from "../../src/ocria/table-model/page-input.js";
 import type { PageInput } from "../../src/ocria/table-model/page-input.js";
 import { mainRotation, uprightInput } from "../../src/ocria/table-model/rotate.js";
 import { canon, loadParseGolden, stage } from "./parse-golden.js";
-import { sha } from "./ocr-golden.js";
+import { EXACT_OCR, sha } from "./ocr-golden.js";
 import { HAS_NATIVE_FONTS, PDF_GOLDENS, runPdf } from "./pdf-golden.js";
 
 /** Fixtures that use no standard-14 font, so the host's system fonts do not matter. */
 const NO_STANDARD_FONTS = new Set(["rtl-text", "scanned", "vertical-text"]);
 
 const exact = (name: string): boolean => HAS_NATIVE_FONTS || NO_STANDARD_FONTS.has(name);
+
+/** Fixtures whose text comes from OCR; exact only on the recording platform (EXACT_OCR). */
+const OCR_TEXT = new Set(["scanned"]);
+const ocrExact = (name: string): boolean => EXACT_OCR || !OCR_TEXT.has(name);
 
 type TableInputs = Array<[number, PageInput]>;
 
@@ -55,12 +59,15 @@ describe.each([...PDF_GOLDENS])("%s", (name) => {
     else expect(canon(unitSkeleton(got))).toEqual(canon(unitSkeleton(want)));
   });
 
-  test("merge.input outcomes: OCR render dpi, flags and recognized lines", async () => {
-    const run = await runPdf(name);
-    const got = run.checkpoints.get("merge.input") as { outcomes: unknown };
-    const want = stage(g, "merge.input") as { outcomes: unknown };
-    expect(canon(got.outcomes)).toEqual(canon(want.outcomes));
-  });
+  test.if(ocrExact(name))(
+    "merge.input outcomes: OCR render dpi, flags and recognized lines",
+    async () => {
+      const run = await runPdf(name);
+      const got = run.checkpoints.get("merge.input") as { outcomes: unknown };
+      const want = stage(g, "merge.input") as { outcomes: unknown };
+      expect(canon(got.outcomes)).toEqual(canon(want.outcomes));
+    }
+  );
 
   test("table.raster: the 150 dpi render gives the ruling lines and image input", async () => {
     const run = await runPdf(name);
@@ -81,12 +88,12 @@ describe.each([...PDF_GOLDENS])("%s", (name) => {
     expect({ w: img.w, h: img.h, k: img.k, px }).toEqual(want.img);
   });
 
-  test("markdown", async () => {
+  test.if(ocrExact(name))("markdown", async () => {
     const run = await runPdf(name);
     expect(run.markdown).toBe(g.text);
   });
 
-  test("pages", async () => {
+  test.if(ocrExact(name))("pages", async () => {
     const run = await runPdf(name);
     // probabilities from LayoutNet's class head differ from the reference in the last f32 bit
     const strip = (pages: unknown[]): unknown =>

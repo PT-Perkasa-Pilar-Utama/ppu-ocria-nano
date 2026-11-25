@@ -90,6 +90,13 @@ values LiteParse records (`tests/fixtures/golden/`). Read
 the goldens only when the reference version or a fixture changes, with the
 steps in [scripts/golden/README.md](scripts/golden/README.md).
 
+The goldens were recorded on macOS arm64. On any other platform, the tests
+that compare recognizer output (engine results, image markdown, the scanned
+PDF) are skipped, because `rec_latin.onnx` is int8 and ONNX Runtime's x86-64
+int8 kernels read some characters differently. CI runs them in the
+"Golden parity (macOS arm64)" job. `OCRIA_EXACT_OCR=1` forces them on and
+`OCRIA_EXACT_OCR=0` turns them off.
+
 ## Developer Certificate of Origin
 
 Every commit must be signed off under the [Developer Certificate of Origin

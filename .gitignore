@@ -31,3 +31,6 @@ models/v1.2/
 
 # pdfium wasm link output (scripts/pdfium/build.sh)
 .pdfium-build/
+
+# wrangler dev local state
+.wrangler/

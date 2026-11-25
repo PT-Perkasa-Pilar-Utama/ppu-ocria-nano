@@ -10,12 +10,12 @@ Need an HTTP service? See [apps/serve](apps/serve/README.md). Need a CLI? See [C
 > **Read the OCRia-nano-1 license before you use this package.**
 >
 > The model files (the ONNX models, their character sets and metadata) are
-> LlamaIndex's. They are not under this package's Apache-2.0 license; they are
+> LlamaIndex's. This package's Apache-2.0 license does not cover them. They are
 > under the OCRia-nano-1 license, and you accept it when the library downloads
 > them for you. Attachment A of that license forbids use:
 >
 > - by an organization with more than USD 2M in revenue last year, or more than
->   USD 2M in funding, unless your use is personal or for Research Purposes; or
+>   USD 2M in funding, unless your use is personal or for Research Purposes, or
 > - to provide, or as part of, a document parsing, OCR or extraction product
 >   that competes with LlamaIndex products such as LlamaParse and LlamaCloud,
 >   whatever your revenue, unless your use is for Research Purposes.
@@ -49,7 +49,6 @@ await service.destroy();
 - [React Native (Mobile)](#react-native-mobile)
 - [Models and Languages](#models-and-languages)
 - [Configuration Reference](#configuration-reference)
-- [How the Port Is Checked](#how-the-port-is-checked)
 - [Benchmarks](#benchmarks)
 - [Contributing](#contributing)
 - [License](#license)
@@ -57,9 +56,9 @@ await service.destroy();
 ## What It Does
 
 - **The whole page.** One `convert()` call detects lines, routes each line to its script's recognizer (Latin, CJK, Arabic and Hebrew, or about 17 other scripts), turns sideways and upside-down pages, removes small tilts, finds tables with LayoutNet, and writes markdown with headings, lists, tables and code.
-- **The same output as LiteParse.** For every test page, each stage gives the values LiteParse 2.21.2 computes, and an image's markdown is identical. See [How the Port Is Checked](#how-the-port-is-checked).
+- **The same output as LiteParse.** For every test page, each stage gives the values LiteParse 2.21.2 computes, and an image's markdown is identical.
 - **Small.** About 1.5 MB of OCR models load at start, plus 17 MB for LayoutNet. The CJK, RTL and world recognizers (2.8 to 5.1 MB each) load on the first line that needs them.
-- **Every stage public.** `detect()` and `recognize()` run the OCR stage alone; LiteParse's later stages (OCR merge, projection, LayoutNet, blocks, markdown, JSON and text output) are exported functions you can call on `page.parsed`.
+- **Every stage public.** `detect()` and `recognize()` run the OCR stage alone. LiteParse's later stages (OCR merge, projection, LayoutNet, blocks, markdown, JSON and text output) are exported functions you can call on `page.parsed`.
 - **TypeScript**, with full type definitions.
 
 ## Runtime Support
@@ -70,10 +69,10 @@ await service.destroy();
 | Bun               | `bun add ppu-ocria-nano onnxruntime-node`                                                                        |                                                             |
 | Deno              | `deno add jsr:@snowfluke/ppu-ocria-nano`                                                                         | [JSR package](https://jsr.io/@snowfluke/ppu-ocria-nano)     |
 | Web browser       | `npm install ppu-ocria-nano onnxruntime-web`, import `ppu-ocria-nano/web`                                        | [Web / Browser Support](#web--browser-support)              |
-| Web worker        | Same as web; the `/web` entry runs in workers.                                                                   | [Web Workers](#web-workers)                                 |
-| Browser extension | Same as web; bundle `ppu-ocria-nano/web`.                                                                        |                                                             |
+| Web worker        | Same as web. The `/web` entry runs in workers.                                                                   | [Web Workers](#web-workers)                                 |
+| Browser extension | Same as web. Bundle `ppu-ocria-nano/web`.                                                                        |                                                             |
 | React Native      | `npm install ppu-ocria-nano onnxruntime-react-native @shopify/react-native-skia`, import `ppu-ocria-nano/mobile` | [React Native](#react-native-mobile)                        |
-| PDF input         | import `ppu-ocria-nano/pdf` (Node, Bun, Deno, browsers; not React Native)                                        | [PDF Input](#pdf-input)                                     |
+| PDF input         | import `ppu-ocria-nano/pdf` (Node, Bun, Deno and browsers, not React Native)                                     | [PDF Input](#pdf-input)                                     |
 
 ## Installation
 
@@ -94,7 +93,7 @@ npm install -g ppu-ocria-nano onnxruntime-node      # or: bun add -g ppu-ocria-n
 ppu-ocria-nano convert scan.png
 ```
 
-`onnxruntime-node` is an optional peer dependency with native binaries, so install it next to the CLI. Release builds also attach standalone executables for Linux, macOS and Windows; see the release page.
+`onnxruntime-node` is an optional peer dependency with native binaries, so install it next to the CLI. Each GitHub release also has standalone executables for Linux, macOS and Windows.
 
 ## Core Usage
 
@@ -134,14 +133,14 @@ An image becomes one page. Its size in points comes from the resolution the file
 
 ### Running the Stages Yourself
 
-`detect()` returns the detector's line quads; `recognize()` runs the whole OCR stage and returns each line's text, confidence and box in image pixels:
+`detect()` returns the detector's line quads. `recognize()` runs the whole OCR stage and returns each line's text, confidence and box in image pixels:
 
 ```ts
 const { boxes } = await service.detect(bytes); // [[x, y], [x, y], [x, y], [x, y]] per line
 const lines = await service.recognize(bytes); // [{ text, confidence, bbox, polygon }, ...]
 ```
 
-The stages after OCR are exported functions over LiteParse's own types, in pipeline order: `mergeOcrResults`, `projectPagesForMarkdown`, `runPage` (LayoutNet), `resegmentByModelBlocks`, `documentSignals`, `extractBlocks`, `renderPageMarkdown`, `layoutBlocks`, `rotateBackOcrDeskew`, and the output formatters `formatJson` and `formatText`. `parseImage()` composes them; read [`src/ocria/pipeline/parse-image.ts`](src/ocria/pipeline/parse-image.ts) for the order and the configuration. `formatJson(pages.map((p) => p.parsed))` writes the JSON that `lit parse --format json` writes.
+The stages after OCR are exported functions over LiteParse's own types, in pipeline order: `mergeOcrResults`, `projectPagesForMarkdown`, `runPage` (LayoutNet), `resegmentByModelBlocks`, `documentSignals`, `extractBlocks`, `renderPageMarkdown`, `layoutBlocks`, `rotateBackOcrDeskew`, and the output formatters `formatJson` and `formatText`. `parseImage()` calls them in that order, and [`src/ocria/pipeline/parse-image.ts`](src/ocria/pipeline/parse-image.ts) shows the configuration it passes. `formatJson(pages.map((p) => p.parsed))` writes the JSON that `lit parse --format json` writes.
 
 ### Custom Models
 
@@ -184,7 +183,7 @@ ppu-ocria-nano models
 
 ## Batch Conversion
 
-`convertBatch()` keeps the input order; `convertStream()` yields each result as it finishes. Both take an iterable or an async iterable of images:
+`convertBatch()` keeps the input order, and `convertStream()` yields each result as it finishes. Both take an iterable or an async iterable of images:
 
 ```ts
 const pages = await service.convertBatch(images, { concurrency: 1 });
@@ -195,7 +194,7 @@ for await (const r of service.convertStream(images, { settle: true })) {
 }
 ```
 
-`concurrency` defaults to 1: each page allocates large tensors, so more pages at once mostly add memory. `settle: true` reports a failed image as a rejected item instead of failing the batch; `signal` stops scheduling; `onProgress(done, total)` reports progress.
+`concurrency` defaults to 1, because each page allocates large tensors and more pages at once mostly add memory. With `settle: true`, a failed image comes back as a rejected item and the batch continues. `signal` stops scheduling, and `onProgress(done, total)` reports progress.
 
 ## PDF Input
 
@@ -210,16 +209,16 @@ const pages = await convertPdf(service, pdfBytes, { maxPages: 20 });
 
 PDF input runs on LiteParse's own patched pdfium (release `chromium/8172` of `run-llama/pdfium-binaries`), which this repository links into WebAssembly (`scripts/pdfium/build.sh`, 4 MB). LiteParse's text extraction calls pdfium functions that stock pdfium builds lack, so only that build reads a PDF's text layer as LiteParse does. Pages without a usable text layer are rendered at `dpi` (default 250) and OCR'd.
 
-| Option               | Default                                         | Effect                                                  |
-| -------------------- | ----------------------------------------------- | ------------------------------------------------------- |
-| `dpi`                | `250`                                           | render resolution of pages that are OCR'd               |
-| `maxPages`           | all                                             | read at most this many pages                            |
-| `password`           |                                                 | password of an encrypted PDF                            |
-| `keepHeadersFooters` | the service's                                   | keep page headers and footers                           |
-| `fonts`              | the host's (Node, Bun, Deno); none in a browser | substitutes for the standard-14 fonts, see below        |
-| `wasmUrl`            | next to the module                              | where `pdfium.wasm` is served, for a browser or bundler |
+| Option               | Default                                             | Effect                                                  |
+| -------------------- | --------------------------------------------------- | ------------------------------------------------------- |
+| `dpi`                | `250`                                               | render resolution of pages that are OCR'd               |
+| `maxPages`           | all                                                 | read at most this many pages                            |
+| `password`           |                                                     | password of an encrypted PDF                            |
+| `keepHeadersFooters` | the service's                                       | keep page headers and footers                           |
+| `fonts`              | the host's on Node, Bun and Deno, none in a browser | substitutes for the standard-14 fonts, see below        |
+| `wasmUrl`            | next to the module                                  | where `pdfium.wasm` is served, for a browser or bundler |
 
-A PDF that names a standard font (Helvetica, Times-Roman, Courier) without embedding it is laid out with a substitute, and every text box depends on the substitute's metrics. A native pdfium, as in LiteParse, uses the host's Arial, Times New Roman and Courier New. On Node, Bun and Deno, `convertPdf` reads the same files (`hostFonts()`: the macOS font folders, `%WINDIR%\Fonts`, or Debian's `msttcorefonts`). On macOS the boxes then equal LiteParse's on all ten test PDFs; the Windows and Linux paths are untested. In a browser, or with `fonts: []`, pdfium uses its built-in fonts and boxes move by up to about 0.6 pt; the markdown of the test PDFs stays the same. Pass the font files as `fonts` to get LiteParse's boxes in a browser.
+A PDF that names a standard font (Helvetica, Times-Roman, Courier) without embedding it is laid out with a substitute, and every text box depends on the substitute's metrics. A native pdfium, as in LiteParse, uses the host's Arial, Times New Roman and Courier New. On Node, Bun and Deno, `convertPdf` reads the same files (`hostFonts()`: the macOS font folders, `%WINDIR%\Fonts`, or Debian's `msttcorefonts`). On macOS the boxes then equal LiteParse's on all ten test PDFs. Nobody has tested the Windows and Linux paths yet. In a browser, or with `fonts: []`, pdfium uses its built-in fonts and boxes move by up to about 0.6 pt, while the markdown of the test PDFs stays the same. Pass the font files as `fonts` to get LiteParse's boxes in a browser.
 
 ## Web / Browser Support
 
@@ -275,7 +274,7 @@ const service = new OcriaNanoService({
 });
 ```
 
-When session creation with the requested providers fails, the service retries on `wasm`; pass `session.onSessionFallback` to be told. The WASM binaries load from jsDelivr at the exact `onnxruntime-web` version you use, unless you set `ort.env.wasm.wasmPaths` yourself.
+When session creation with the requested providers fails, the service retries on `wasm`. Pass `session.onSessionFallback` to hear about it. The WASM binaries load from jsDelivr at the exact `onnxruntime-web` version you use, unless you set `ort.env.wasm.wasmPaths` yourself.
 
 ### Multithreaded WASM (Cross-Origin Isolation)
 
@@ -302,7 +301,7 @@ await service.initialize();
 const page = await service.convert(imageBuffer); // ArrayBuffer of an encoded image
 ```
 
-You need React Native 0.74 or later (Expo SDK 51 or later) and onnxruntime-react-native 1.24.1 or later. Both peer packages ship native code, so use a development build or `expo prebuild`; Expo Go cannot load them. Inference runs on the CPU; opt into NNAPI (Android) or CoreML (iOS) with `session.executionProviders`. React Native has no WebCrypto, so model downloads are checked by size only. PDF input does not run on React Native, because Hermes has no WebAssembly.
+You need React Native 0.74 or later (Expo SDK 51 or later) and onnxruntime-react-native 1.24.1 or later. Both peer packages ship native code, so use a development build or `expo prebuild`, because Expo Go cannot load them. Inference runs on the CPU, and you can opt into NNAPI (Android) or CoreML (iOS) with `session.executionProviders`. React Native has no WebCrypto, so model downloads are checked by size only. PDF input does not run on React Native, because Hermes has no WebAssembly.
 
 ## Models and Languages
 
@@ -316,7 +315,7 @@ You need React Native 0.74 or later (Expo SDK 51 or later) and onnxruntime-react
 | `rec_world.onnx` | recognizer for about 17 other scripts   | 3.91 MB  | on first such line               |
 | `tablenet.onnx`  | LayoutNet: tables, headings, blocks     | 17.18 MB | at start, unless `layout: false` |
 
-Each recognizer comes with a `.charset.json`; the detector and the RTL recognizer carry small `.meta.json` files. All files total 30.5 MB.
+Each recognizer comes with a `.charset.json`, and the detector and the RTL recognizer carry small `.meta.json` files. All files total 30.5 MB.
 
 The model card lists the languages. Two limits show on the test pages: vertical Chinese and Japanese text and pages tilted 30 degrees come out unreadable, in LiteParse as here. The blog notes that the models have no chart model and keep charts as images.
 
@@ -324,13 +323,13 @@ The model card lists the languages. Two limits show on the test pages: vertical 
 
 ### `OcriaNanoOptions`
 
-| Option               | Default                | Meaning                                                             |
-| -------------------- | ---------------------- | ------------------------------------------------------------------- |
-| `models`             | pinned release         | per-file sources: URL, path (Node, Bun) or bytes                    |
-| `layout`             | `true`                 | run LayoutNet; `false` uses LiteParse's heuristic tables and blocks |
-| `keepHeadersFooters` | `false`                | keep page headers and footers in the markdown                       |
-| `session`            | CPU (Node), WASM (web) | ONNX Runtime session options, plus `onSessionFallback`              |
-| `verbose`            | `false`                | log loading and stage steps                                         |
+| Option               | Default                | Meaning                                                                    |
+| -------------------- | ---------------------- | -------------------------------------------------------------------------- |
+| `models`             | pinned release         | per-file sources: URL, path (Node, Bun) or bytes                           |
+| `layout`             | `true`                 | run LayoutNet, or with `false` use LiteParse's heuristic tables and blocks |
+| `keepHeadersFooters` | `false`                | keep page headers and footers in the markdown                              |
+| `session`            | CPU (Node), WASM (web) | ONNX Runtime session options, plus `onSessionFallback`                     |
+| `verbose`            | `false`                | log loading and stage steps                                                |
 
 ### `BatchOptions`
 
@@ -340,14 +339,6 @@ The model card lists the languages. Two limits show on the test pages: vertical 
 | `settle`      | `false` | report failures as rejected items                     |
 | `signal`      |         | stop scheduling further images                        |
 | `onProgress`  |         | called after each image with the done count and total |
-
-## How the Port Is Checked
-
-A recorder patch on LiteParse `crates-v2.21.2` writes the input and output of every stage for 21 test pages (11 images, 10 PDFs, some generated for headings, lists, ruled and borderless tables, code, links and page chrome). Each TypeScript stage is tested on LiteParse's recorded input for that stage, and the image path is also run end to end in TypeScript and compared with LiteParse's markdown. [`scripts/golden/README.md`](scripts/golden/README.md) has the patch and the steps, and [`docs/PORTING.md`](docs/PORTING.md) the rules the port follows.
-
-What matches: every OCR line's text, box, polygon and confidence; the merged page; the projection; the LayoutNet units, features, tables and blocks; the layout blocks; the markdown; and the final page. Two places differ from LiteParse in the last floating-point bit: LiteParse's `f32::exp` and `f32::sin` call the platform's math library, which rounds differently from JavaScript's, so script-router shares and LayoutNet class probabilities differ by about 1e-7. LayoutNet's raw outputs differ by at most 2e-5. No decision on the test pages changes.
-
-An image here is OCR'd at its own pixels, through LiteParse's `ocr_page_images` path. `lit parse image.png` instead wraps the image in a PDF and OCRs a 250 dpi render of it, which changes single words on some pages. See the [decision log](docs/decisions/2026-11-25-ppu-ocria-nano-scope.md) (Q10).
 
 ## Benchmarks
 
@@ -359,4 +350,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md). Port changes follow [docs/PORTING.md](d
 
 ## License
 
-The code is Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)); it includes a port of LiteParse (Apache-2.0, LlamaIndex). The OCRia-nano-1 model files are under the OCRia-nano-1 license; see [LICENSE-STATUS.md](LICENSE-STATUS.md).
+The code is Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)) and includes a port of LiteParse (Apache-2.0, LlamaIndex). The OCRia-nano-1 model files are under the OCRia-nano-1 license, which [LICENSE-STATUS.md](LICENSE-STATUS.md) explains.

@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# CUDA image for ppu-ocria-nano-serve. Requires the NVIDIA Container Toolkit on
+# the host and `docker run --gpus all`. Build from the REPO ROOT:
+#   docker build -f apps/serve/Dockerfile.cuda -t ppu-ocria-nano-serve:cuda .
+#
+# Licenses: the code in this image is Apache-2.0. The OCRia-nano-1 weights,
+# charsets and metadata it downloads at build time are LlamaIndex's, under the
+# OCRia-nano-1 license (modified AI Pubs Open RAIL-M), not Apache-2.0. That
+# license counts a hosted service as distribution: pass its use restrictions
+# (Attachment A) and a copy of the license to your users. See LICENSE-STATUS.md.
+#
+# onnxruntime-node ships the CUDA execution provider on linux/x64; it loads when
+# the CUDA runtime libraries are present (this base image) and EXECUTION_PROVIDERS
+# includes "cuda". If the GPU/runtime is missing, the library falls back to CPU.
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6 AS runtime
+WORKDIR /app
+
+# ca-certificates for HTTPS model downloads. Bun is copied from the pinned
+# oven/bun image rather than piping its install script to bash (Scorecard
+# Pinned-Dependencies: no `curl | bash`).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=oven/bun:1.4.2-slim@sha256:cb3bbbb08e13a4a2ff400f24c7a2a1d5efa83f6ef8544d52d95a519631e2fc61 /usr/local/bin/bun /usr/local/bin/bun
+
+LABEL org.opencontainers.image.title="ppu-ocria-nano-serve" \
+      org.opencontainers.image.description="Production-grade REST API serving ppu-ocria-nano (OCRia-nano-1) - Hono + Bun, CUDA." \
+      org.opencontainers.image.source="https://github.com/PT-Perkasa-Pilar-Utama/ppu-ocria-nano" \
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-OCRia-nano-1"
+
+ENV NODE_ENV=production \
+    PORT=8080 \
+    EXECUTION_PROVIDERS=cuda,cpu
+
+COPY package.json bun.lock ./
+RUN bun install --production --ignore-scripts \
+  && bun add onnxruntime-node --ignore-scripts \
+  && bun pm trust onnxruntime-node
+COPY apps/serve/package.json apps/serve/bun.lock apps/serve/
+RUN cd apps/serve && bun install --production
+
+COPY src ./src
+# pdfium for PDF input: run scripts/pdfium/build.sh in the build context first
+COPY .pdfium-build ./.pdfium-build
+COPY tsconfig.json ./
+COPY apps/serve/src ./apps/serve/src
+COPY apps/serve/tsconfig.json ./apps/serve/
+
+# Pre-bake the 13 OCRia-nano-1 files; the build fails on a size or SHA-256
+# that differs from the pin in src/model-catalogue.ts.
+RUN bun -e "import { OcriaNanoService } from '/app/src/index.ts'; await OcriaNanoService.downloadModels();"
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD bun -e "fetch('http://127.0.0.1:'+(Bun.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["bun", "run", "apps/serve/src/index.ts"]

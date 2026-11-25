@@ -1,0 +1,19 @@
+# Docker reads the ignore file at the build context root (the repo root, see
+# apps/serve/docker-compose.yml), not next to the Dockerfile. .pdfium-build
+# stays in: the image copies it for PDF input.
+node_modules
+lib
+out
+tests
+private-tests
+bench
+assets
+docs
+skill-ppu-ocria-nano
+**/*.test.ts
+.git
+.github
+.bin-build
+.mirror
+.scratch
+coverage

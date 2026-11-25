@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Slack community
+    url: https://join.slack.com/t/ppupaddleocrcommunity/shared_invite/zt-3uzp1uuma-lrkEq8OYBYhGdUtzRoVmUg
+    about: Ask questions, share usage patterns, and chat with other ppu-ocria-nano users.
+  - name: OCRia-nano-1 models (upstream)
+    url: https://github.com/run-llama/liteparse
+    about: What the models can read (scripts, handwriting) is upstream's; report model behaviour there.
+  - name: README - Models and languages
+    url: https://github.com/PT-Perkasa-Pilar-Utama/ppu-ocria-nano#models-and-languages
+    about: Before filing a language or accuracy issue, check the supported scripts and the limitations.

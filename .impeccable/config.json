@@ -1,0 +1,15 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": ["tests/ocria/ocr-golden.ts"],
+        "createdAt": "2026-11-25T05:57:49.364Z",
+        "reason": "agent: L61 is the TypeScript return type Promise<Img> (the pipeline's image type), not an HTML img tag"
+      }
+    ]
+  }
+}

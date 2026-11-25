@@ -1,0 +1,118 @@
+name: Bug report
+description: Something is broken - wrong output, crash, or runtime error.
+title: "bug: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report. Please search existing issues first to avoid duplicates.
+
+        If the problem is only that accuracy is lower than you expected on a specific image or language,
+        use the **Accuracy / OCR quality** template instead - that's tracked separately because it usually
+        means a different model is the right fix, not a code change.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear, one-paragraph description of the problem.
+      placeholder: |
+        `convert()` throws `Cannot read properties of undefined (reading 'data')`
+        when I call it with an OffscreenCanvas from a Web Worker.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        Minimal code that reproduces the bug. If it depends on a specific image, link it or attach it.
+        A short `.ts` or `.js` snippet plus the image is usually enough.
+      render: ts
+      placeholder: |
+        import { OcriaNanoService } from "ppu-ocria-nano";
+
+        const svc = new OcriaNanoService();
+        await svc.initialize();
+        const page = await svc.convert(buf);
+        // ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      placeholder: "convert() should return a Page with `lines` populated."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: The full error message and stack trace, or the incorrect output. Paste logs verbatim.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Node.js
+        - Bun
+        - Browser (Chrome / Edge)
+        - Browser (Firefox)
+        - Browser (Safari)
+        - Deno
+        - Other (specify in "Additional context")
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ppu-ocria-nano version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ort-version
+    attributes:
+      label: onnxruntime-node / onnxruntime-web version
+      description: From your `package.json` or lockfile.
+      placeholder: "onnxruntime-node 1.23.2 / onnxruntime-web 1.26.0"
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js / Bun version
+      placeholder: e.g. Node 20.11.0, Bun 1.3.13
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system & architecture
+      placeholder: e.g. macOS 14.4 (arm64), Ubuntu 22.04 (x86_64), Windows 11 (x86_64)
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Models used
+      description: Default, a specific URL, or a custom local path?
+      placeholder: "Defaults (llamaindex/OCRia-nano-1 v1.0.0)"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: |
+        Anything else that could help reproduce? Bundler (Vite, webpack, Next.js), Web Worker, special
+        canvas polyfills, CORS headers for cross-origin models, etc.

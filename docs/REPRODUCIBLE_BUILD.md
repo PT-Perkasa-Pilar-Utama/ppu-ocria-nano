@@ -1,0 +1,36 @@
+# Reproducible build
+
+ppu-ocria-nano produces a **byte-identical** build from the same source:
+rebuilding the package yields the same `lib/` output, with no embedded
+timestamps, absolute paths, or other nondeterministic data.
+
+## Why it is deterministic
+
+`bun run build` (see `scripts/build.ts`) transpiles `src/**/*.ts` to `lib/` with
+Bun's transpiler and writes type declarations. The transform is a pure function
+of the source files and the pinned toolchain:
+
+- **Toolchain is pinned.** Bun is pinned in CI (see `.github/workflows/ci.yml`); dependencies are
+  pinned in `bun.lock` and installed with `--frozen-lockfile`.
+- **No nondeterministic inputs.** The build embeds no build time, hostname, or
+  absolute path. File order is sorted; output is minified deterministically.
+- **Model files are not part of the build.** The package downloads the ONNX
+  models at runtime from a pinned revision; `models/` is a mirror outside `lib/`.
+
+## Verify it yourself
+
+```bash
+bun install --frozen-lockfile
+bun run build
+h1=$(find lib -type f -exec shasum {} \; | sort | shasum)
+
+rm -rf lib
+bun run build
+h2=$(find lib -type f -exec shasum {} \; | sort | shasum)
+
+[ "$h1" = "$h2" ] && echo "reproducible" || echo "NOT reproducible"
+```
+
+Both hashes match. CI enforces this on every push and pull request via the
+**"Verify reproducible build"** step in `.github/workflows/ci.yml`, which builds
+twice and fails if the output differs.

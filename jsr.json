@@ -1,0 +1,37 @@
+{
+  "name": "@snowfluke/ppu-ocria-nano",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./web": "./src/web/index.ts",
+    "./pdf": "./src/pdf/index.ts"
+  },
+  "publish": {
+    "include": [
+      "LICENSE",
+      "NOTICE",
+      "LICENSE-STATUS.md",
+      "README.md",
+      "package.json",
+      "tsconfig.json",
+      "src/**/*.ts",
+      "coi-serviceworker.js",
+      ".pdfium-build/pdfium.mjs",
+      ".pdfium-build/pdfium.wasm",
+      ".pdfium-build/licenses/*"
+    ],
+    "exclude": [
+      "tests",
+      "assets",
+      "scripts",
+      "lib",
+      "benchmarks",
+      "examples",
+      "models",
+      "out",
+      ".claude",
+      "src/mobile"
+    ]
+  }
+}

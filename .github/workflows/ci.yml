@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Quality Checks and Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Pinned: bun 1.2.23 on linux could hang opencv-js 5's Promise-based
+          # runtime init when the node and web entries load in one process,
+          # and 1.3.13 SIGILL'd on exit. 1.3.14 fixed both; 1.4.2 is the
+          # current pin. Keep this in step with CONTRIBUTING.md and the serve
+          # Dockerfile.
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # pdfium.wasm is built here, not committed: LiteParse's patched pdfium
+      # archive linked with emsdk 3.1.72 (scripts/pdfium/build.sh, pinned by sha256).
+      - name: Cache pdfium build inputs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ppu-ocria-nano-pdfium
+          key: pdfium-${{ runner.os }}-${{ hashFiles('scripts/pdfium/*') }}
+
+      - name: Build pdfium wasm
+        run: bash scripts/pdfium/build.sh
+
+      # apps/serve is a standalone package with its own deps. Install them
+      # before the test step so the root `bun test` (which scans the whole repo)
+      # can resolve them and cover apps/serve/src.
+      - name: Install serve dependencies
+        run: cd apps/serve && bun install --frozen-lockfile
+
+      - name: Formatter check
+        run: bun run fmt
+
+      - name: Linting check
+        run: bun run lint --format=github
+
+      - name: TypeScript type check
+        run: bun run type-check
+
+      # The model files are not in the repository: tests read the download cache.
+      # Keep it between runs: keyed on the pinned model revision, it changes
+      # only when the models do (and spares Hugging Face's per-IP rate limit; a
+      # download that gets HTTP 429 falls back to the mirror on its own).
+      - name: Cache OCRia-nano-1 models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ppu-ocria-nano
+          key: ocria-nano-models-${{ hashFiles('src/model-catalogue.ts') }}
+
+      # Bun caps lifecycle-hook timeouts at the 5 s default and rejects a
+      # per-hook timeout argument, so a cold download inside a hook times out.
+      # Warm every OCRia-nano-1 file (about 31 MB) here instead.
+      - name: Warm model cache
+        run: bun scripts/warm-test-models.ts
+
+      # Runs the whole repo (main suite, CLI, and apps/serve) in one worker:
+      # each test file loads the models, so two workers double the peak.
+      # Gates on coverage (>= 90% line + function, per bunfig.toml).
+      - name: Run tests with coverage
+        run: bun run test:coverage
+
+      # Feeds the README coverage badge. Needs the CODECOV_TOKEN repository
+      # secret (upload-only scope); until it exists the step logs a warning
+      # and the badge reads "unknown", but CI stays green.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Build
+        run: bun run build
+
+      # Verify the build is reproducible: build a second time and confirm the
+      # output is byte-identical (OpenSSF Best Practices: build_reproducible).
+      - name: Verify reproducible build
+        run: |
+          h1=$(find lib -type f -exec shasum {} \; | sort | shasum)
+          rm -rf lib
+          bun run build
+          h2=$(find lib -type f -exec shasum {} \; | sort | shasum)
+          if [ "$h1" != "$h2" ]; then
+            echo "::error::Build is not reproducible: $h1 != $h2"
+            exit 1
+          fi
+          echo "Build is reproducible."
+
+      # The bin is only usable via npx/bunx if the build kept its shebang and
+      # executable bit; assert both, then that it actually runs.
+      - name: CLI - verify bin
+        run: |
+          test -x lib/cli/index.js
+          head -1 lib/cli/index.js | grep -q '^#!/usr/bin/env node'
+          node lib/cli/index.js --version
+
+      # apps/serve tests run as part of the root suite above; type-check it
+      # separately here (deps already installed before the test step).
+      - name: Serve - type check
+        run: cd apps/serve && bun run type-check
+
+  sca:
+    name: SCA (dependency vulnerabilities)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Fails the run on any vulnerable dependency, blocking the change from
+      # merging once this job is a required status check.
+      - name: Run osv-scanner
+        uses: google/osv-scanner-action/osv-scanner-action@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+        with:
+          scan-args: |-
+            --lockfile=./bun.lock
+            --lockfile=./apps/serve/bun.lock

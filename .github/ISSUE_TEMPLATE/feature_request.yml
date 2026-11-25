@@ -1,0 +1,64 @@
+name: Feature request
+description: Suggest a new capability, API, or behaviour for ppu-ocria-nano.
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for **library-level** feature requests (new API, new options, new platform support).
+
+        The models are LlamaIndex's OCRia-nano-1, run as LiteParse runs them. Requests about what the models can read (new scripts, handwriting)
+        belong upstream at [run-llama/liteparse](https://github.com/run-llama/liteparse/issues).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What are you trying to do that the current API makes hard or impossible?
+      placeholder: |
+        I want to stream OCR results as each line is recognised, instead of waiting
+        for all lines to finish. On long documents the user-facing latency feels bad.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the API look like? Sketch a usage example if you have one in mind.
+      render: ts
+      placeholder: |
+        const svc = new OcriaNanoService();
+        await svc.initialize();
+
+        for await (const line of svc.convertLines(buf)) {
+          console.log(line.text);
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds did you try? Why weren't they good enough?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which build does this apply to?
+      multiple: true
+      options:
+        - Node / Bun (`ppu-ocria-nano`)
+        - Web (`ppu-ocria-nano/web`)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links to related issues, upstream capabilities you're modelling this on, etc.

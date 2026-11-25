@@ -1,0 +1,654 @@
+diff --git a/crates/liteparse/examples/ocria_dump.rs b/crates/liteparse/examples/ocria_dump.rs
+new file mode 100644
+index 0000000..71e7a3c
+--- /dev/null
++++ b/crates/liteparse/examples/ocria_dump.rs
+@@ -0,0 +1,34 @@
++//! ppu-ocria-nano goldens (scratch clone only): run the ocria-nano OCR stage on PNG pages and
++//! write each stage's recorded values plus the final results as JSON.
++//! Usage: OCRIA_DUMP=1 ocria_dump <model_dir> <ort_dylib> <out_dir> <png>...
++use liteparse::ocr::OcrImage;
++use liteparse::ocr::ocria::{OcriaEngine, OcriaOptions, golden};
++use std::path::Path;
++
++fn main() {
++    let a: Vec<String> = std::env::args().collect();
++    let engine = OcriaEngine::load(Path::new(&a[1]), Some(Path::new(&a[2])), OcriaOptions::default())
++        .expect("load");
++    let out_dir = Path::new(&a[3]);
++    for png in &a[4..] {
++        let img = OcrImage::from_file(png).expect("decode");
++        let (w, h) = img.dimensions();
++        let px = img.pixels(false).expect("pixels");
++        golden::take();
++        let res = engine.run(&px, w, h).expect("run");
++        let rec: Vec<serde_json::Value> = golden::take()
++            .into_iter()
++            .map(|(k, v)| serde_json::json!({"k": k, "v": v}))
++            .collect();
++        let name = Path::new(png).file_stem().unwrap().to_string_lossy().to_string();
++        let doc = serde_json::json!({
++            "image": Path::new(png).file_name().unwrap().to_string_lossy(),
++            "width": w, "height": h,
++            "pixels_sha": golden::hash(&px),
++            "stages": rec,
++            "results": res,
++        });
++        std::fs::write(out_dir.join(format!("{name}.ocr.json")), serde_json::to_string(&doc).unwrap()).unwrap();
++        eprintln!("{name}: {} lines", res.len());
++    }
++}
+diff --git a/crates/liteparse/examples/ocria_parse_dump.rs b/crates/liteparse/examples/ocria_parse_dump.rs
+new file mode 100644
+index 0000000..fdfffe9
+--- /dev/null
++++ b/crates/liteparse/examples/ocria_parse_dump.rs
+@@ -0,0 +1,65 @@
++//! ppu-ocria-nano goldens (scratch clone only): parse PNG pages through LiteParse's full pipeline
++//! (ocria-nano OCR on the page image itself, LayoutNet from tablenet.onnx, markdown) and write each
++//! stage's recorded values plus the result as JSON.
++//! Usage: OCRIA_DUMP=1 ocria_parse_dump <model_dir> <ort_dylib> <out_dir> <png>...
++use liteparse::config::{LiteParseConfig, OutputFormat};
++use liteparse::ocr::ocria::{OcriaEngine, OcriaOptions, golden};
++use liteparse::parser::LiteParse;
++use std::collections::HashMap;
++use std::path::Path;
++use std::sync::Arc;
++
++fn main() {
++    let a: Vec<String> = std::env::args().collect();
++    let dir = Path::new(&a[1]);
++    let engine = Arc::new(
++        OcriaEngine::load(dir, Some(Path::new(&a[2])), OcriaOptions::default()).expect("load"),
++    );
++    let out_dir = Path::new(&a[3]);
++    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
++    for png in &a[4..] {
++        let png_abs = std::fs::canonicalize(png).unwrap().to_string_lossy().to_string();
++        let mut config = LiteParseConfig::default();
++        config.output_format = OutputFormat::Markdown;
++        config.table_model = Some(dir.join("tablenet.onnx").to_string_lossy().to_string());
++        let is_pdf = png_abs.ends_with(".pdf");
++        if !is_pdf {
++            config.ocr_page_images = HashMap::from([(1u32, png_abs.clone())]);
++        }
++        config.quiet = true;
++        config.ocr_enabled = true;
++        config.extract_blocks = true;
++        config.num_workers = 1;
++        // SAFETY: single-threaded at this point; read by render_raw during the parse below
++        unsafe {
++            if is_pdf {
++                std::env::remove_var("OCRIA_RAW_IMAGE")
++            } else {
++                std::env::set_var("OCRIA_RAW_IMAGE", &png_abs)
++            }
++        };
++        let parser = LiteParse::new(config).with_ocr_engine(engine.clone());
++        golden::take();
++        let res = match rt.block_on(parser.parse(&png_abs)) {
++            Ok(r) => r,
++            Err(e) => {
++                eprintln!("{png}: skipped ({e})");
++                continue;
++            }
++        };
++        let rec: Vec<serde_json::Value> = golden::take()
++            .into_iter()
++            .filter(|(k, _)| !k.starts_with("det.") && !k.starts_with("rec.") && !k.starts_with("router.") && !k.starts_with("read.") && !k.starts_with("page.") && k != "route")
++            .map(|(k, v)| serde_json::json!({"k": k, "v": v}))
++            .collect();
++        let name = Path::new(png).file_stem().unwrap().to_string_lossy().to_string();
++        let doc = serde_json::json!({
++            "image": Path::new(png).file_name().unwrap().to_string_lossy(),
++            "stages": rec,
++            "text": res.text,
++            "pages": res.pages,
++        });
++        std::fs::write(out_dir.join(format!("{name}.parse.json")), serde_json::to_string(&doc).unwrap()).unwrap();
++        eprintln!("{name}: {} chars of markdown", res.text.len());
++    }
++}
+diff --git a/crates/liteparse/src/ocr/ocria/det.rs b/crates/liteparse/src/ocr/ocria/det.rs
+index 02ba81f..47a6d16 100644
+--- a/crates/liteparse/src/ocr/ocria/det.rs
++++ b/crates/liteparse/src/ocr/ocria/det.rs
+@@ -101,6 +101,7 @@ impl Detector {
+         let w = 32usize.max(((big_w * s / 32.0).round_ties_even() as usize) * 32);
+         let (sx, sy) = (w as f64 / big_w, h as f64 / big_h);
+         let small = resize_area(img, w, h);
++        super::golden::put("det.small", super::golden::img(&small));
+         let mut x = vec![0f32; 3 * h * w];
+         for c in 0..3 {
+             for i in 0..h * w {
+@@ -164,6 +165,7 @@ impl Detector {
+             }
+             boxes.push(order_quad(&quad));
+         }
++        super::golden::put("det.raw", serde_json::json!({"boxes": boxes, "prob_shape": [ph, pw], "prob_sha": super::golden::hash(&prob.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>())}));
+         if self.merge > 0.0 {
+             boxes = merge_collinear(&boxes, self.merge);
+         }
+@@ -185,6 +187,7 @@ impl Detector {
+             }
+             None => Vec::new(),
+         };
++        super::golden::put("det.pass", serde_json::json!({"long_side": long_side, "boxes": boxes, "faint": faint}));
+         Ok((boxes, s, faint))
+     }
+ }
+diff --git a/crates/liteparse/src/ocr/ocria/golden.rs b/crates/liteparse/src/ocr/ocria/golden.rs
+new file mode 100644
+index 0000000..b721891
+--- /dev/null
++++ b/crates/liteparse/src/ocr/ocria/golden.rs
+@@ -0,0 +1,25 @@
++//! Golden recorder for the ppu-ocria-nano port (scratch clone only): stage values pushed when
++//! OCRIA_DUMP is set. No pipeline logic changes.
++use std::sync::Mutex;
++pub static REC: Mutex<Vec<(String, serde_json::Value)>> = Mutex::new(Vec::new());
++pub fn on() -> bool {
++    std::env::var_os("OCRIA_DUMP").is_some()
++}
++pub fn put(k: &str, v: serde_json::Value) {
++    if on() {
++        REC.lock().unwrap().push((k.to_string(), v));
++    }
++}
++pub fn take() -> Vec<(String, serde_json::Value)> {
++    std::mem::take(&mut *REC.lock().unwrap())
++}
++pub fn hash(b: &[u8]) -> String {
++    use sha2::{Digest, Sha256};
++    format!("{:x}", Sha256::digest(b))
++}
++pub fn img(i: &super::img::Img) -> serde_json::Value {
++    serde_json::json!({"w": i.w, "h": i.h, "ch": i.ch, "sha": hash(&i.data)})
++}
++pub fn ser_sha<S: serde::Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
++    s.serialize_str(&hash(v))
++}
+diff --git a/crates/liteparse/src/ocr/ocria/mod.rs b/crates/liteparse/src/ocr/ocria/mod.rs
+index 433063e..b380cc4 100644
+--- a/crates/liteparse/src/ocr/ocria/mod.rs
++++ b/crates/liteparse/src/ocr/ocria/mod.rs
+@@ -10,7 +10,8 @@
+ //! the library is found at the path given to [`OcriaEngine::load`] or `ORT_DYLIB_PATH`.
+ 
+ mod det;
+-mod img;
++pub mod golden;
++pub mod img;
+ pub mod package;
+ mod page;
+ pub(crate) mod pool;
+@@ -357,6 +358,7 @@ impl OcriaEngine {
+                 data: img0.data.iter().flat_map(|&v| [v, v, v]).collect(),
+             };
+         }
++        golden::put("page.input", golden::img(&img0));
+         let (mut boxes, mut faint) = self.det.detect_with_faint(&img0)?;
+         let mut sideways = false;
+         let turned;
+@@ -373,15 +375,18 @@ impl OcriaEngine {
+                 sideways = true;
+             }
+         }
++        golden::put("page.sideways", serde_json::json!(sideways));
+         if self.opts.gutter {
+             boxes = page::split_gutters(img, &boxes);
+         }
++        golden::put("page.gutter", serde_json::json!(boxes));
+         let (mut reads, flip, dom) = if boxes.is_empty() {
+             (Vec::new(), false, 0)
+         } else {
+             self.read(img, &boxes)?
+         };
+         let n_lines = boxes.len();
++        golden::put("page.reads", serde_json::json!({"reads": reads, "flip": flip, "dom": dom}));
+         if !faint.is_empty() && !flip {
+             // with the page's recognizer: a lone glyph is too short for the router
+             let crops: Vec<Img> = faint.iter().map(|b| page::crop(img, b)).collect();
+@@ -439,7 +444,9 @@ impl OcriaEngine {
+     /// script group.
+     fn read(&self, img: &Img, boxes: &[Quad]) -> Result<PageReads, OcriaError> {
+         let mut crops: Vec<Img> = boxes.iter().map(|b| page::crop(img, b)).collect();
++        golden::put("read.crops", serde_json::Value::Array(crops.iter().map(golden::img).collect()));
+         let (mut groups, flip, share) = self.router.route(&crops)?;
++        golden::put("route", serde_json::json!({"groups": groups, "flip": flip, "share": share}));
+         if flip {
+             crops = crops.iter().map(|c| c.rot90(2)).collect();
+         }
+@@ -455,6 +462,7 @@ impl OcriaEngine {
+                 out[i] = res;
+             }
+         }
++        golden::put("read.routed", serde_json::json!(out));
+         let mut dom = page::majority(&groups);
+         // a routed reading this confident is a real reading, not the 0.5-0.7 junk of the wrong recognizer
+         const KEEP_CONF: f32 = 0.75;
+@@ -528,6 +536,7 @@ impl OcriaEngine {
+                 }
+             }
+         }
++        golden::put("read.rescued", serde_json::json!({"out": out, "groups": groups, "dom": dom}));
+         // lines routed away from the page's script are read with the page's recognizer too;
+         // the off-script reading must win clearly
+         let odd: Vec<usize> = (0..n).filter(|&i| groups[i] != dom).collect();
+diff --git a/crates/liteparse/src/ocr/ocria/rec.rs b/crates/liteparse/src/ocr/ocria/rec.rs
+index 4a3f9b2..c56b393 100644
+--- a/crates/liteparse/src/ocr/ocria/rec.rs
++++ b/crates/liteparse/src/ocr/ocria/rec.rs
+@@ -57,6 +57,7 @@ impl Recognizer {
+     /// padded width it was run at.
+     pub fn read(&self, crops: &[&Img]) -> Result<Vec<(String, f32)>, OcriaError> {
+         let lines: Vec<Img> = crops.iter().map(|c| prep(c, STRIDE * 2, MAX_W)).collect();
++        super::golden::put("rec.prep", serde_json::Value::Array(lines.iter().map(super::golden::img).collect()));
+         let mut order: Vec<usize> = (0..lines.len()).collect();
+         order.sort_by_key(|&i| lines[i].w);
+         let mut out = vec![(String::new(), 0f32); lines.len()];
+@@ -101,6 +102,7 @@ impl Recognizer {
+                 out[i] = (text, mean);
+             }
+         }
++        super::golden::put("rec.read", serde_json::json!(out));
+         Ok(out)
+     }
+ }
+@@ -173,6 +175,7 @@ impl Router {
+                 fs.push(Self::softmax(&f[j * 2..j * 2 + 2])[1]);
+             }
+         }
++        super::golden::put("router.probs", serde_json::json!({"gs": gs, "fs": fs}));
+         Ok((gs, fs))
+     }
+ 
+diff --git a/crates/liteparse/src/ocr_merge.rs b/crates/liteparse/src/ocr_merge.rs
+index 1df0786..814bc1f 100644
+--- a/crates/liteparse/src/ocr_merge.rs
++++ b/crates/liteparse/src/ocr_merge.rs
+@@ -1465,6 +1465,7 @@ pub fn merge_ocr_results(
+     ocr_failure_fatal: bool,
+     emit_word_boxes: bool,
+ ) -> Result<(), LiteParseError> {
++    crate::ocr::ocria::golden::put("merge.input", serde_json::json!({"pages": &*pages, "outcomes": &outcomes, "ocr_failure_fatal": ocr_failure_fatal, "emit_word_boxes": emit_word_boxes}));
+     let mut state = OcrMergeState::default();
+     state.merge(pages, outcomes, emit_word_boxes)?;
+     state.finish(ocr_failure_fatal)
+diff --git a/crates/liteparse/src/parser.rs b/crates/liteparse/src/parser.rs
+index 02b996d..1d3f656 100644
+--- a/crates/liteparse/src/parser.rs
++++ b/crates/liteparse/src/parser.rs
+@@ -250,10 +250,12 @@ fn apply_layout(
+         return None;
+     }
+     let signals = stages::document_signals(parsed_pages, config.keep_headers_footers);
++    crate::ocr::ocria::golden::put("layout.signals", serde_json::json!(&signals));
+     let block_options = parser.block_options(outline);
+     let mut page_md = Vec::with_capacity(parsed_pages.len());
+     for page in parsed_pages.iter_mut() {
+         let blocks = stages::extract_blocks(page, &signals, &block_options);
++        crate::ocr::ocria::golden::put("layout.blocks", serde_json::json!(&blocks));
+         if config.extract_blocks {
+             // A page with no structural decomposition reports an empty list,
+             // not `None` — extraction *was* enabled, there was just nothing to
+@@ -843,6 +845,7 @@ impl LiteParse {
+                 image_error_count,
+                 ..
+             } = extracted;
++            crate::ocr::ocria::golden::put("extract.pages", serde_json::json!(&pages));
+             let t_extract = web_time::Instant::now();
+             log(&format!(
+                 "[liteparse] extract: {:.1}ms ({} pages)",
+@@ -896,6 +899,7 @@ impl LiteParse {
+                     t_tin.elapsed().as_secs_f64() * 1000.0
+                 ));
+             }
++            crate::ocr::ocria::golden::put("table.inputs", serde_json::json!(&table_inputs));
+             #[cfg(target_arch = "wasm32")]
+             let repaired_input: Option<crate::types::PdfInput> = None;
+             // `lib` is dropped here, releasing the PDFium lock.
+@@ -1063,6 +1067,7 @@ impl LiteParse {
+                 merge.finish(self.config.ocr_failure_fatal)?;
+             }
+         }
++        crate::ocr::ocria::golden::put("merge.pages", serde_json::json!(&pages));
+         let t_ocr = web_time::Instant::now();
+         log(&format!(
+             "[liteparse] ocr: {:.1}ms",
+@@ -1123,6 +1128,9 @@ impl LiteParse {
+         if !table_inputs.is_empty() {
+             crate::projection::collect_signals(false);
+             let signals = crate::projection::take_signals();
++            crate::ocr::ocria::golden::put("project.pages", serde_json::json!(&parsed_pages));
++            crate::ocr::ocria::golden::put("project.signals", serde_json::json!(&signals));
++            crate::ocr::ocria::golden::put("table.inputs.final", serde_json::json!(&table_inputs));
+             let t_tm = web_time::Instant::now();
+             let opt = crate::table_model::decode::DecodeOptions {
+                 ..Default::default()
+@@ -1171,11 +1179,13 @@ impl LiteParse {
+                         .iter_mut()
+                         .find(|p| p.page_number == *page_number)
+                     {
++                        crate::ocr::ocria::golden::put("table.model", serde_json::json!(&pm));
+                         pp.model_tables = pm.tables;
+                         pp.model_classes = pm.classes;
+                         pp.model_blocks = pm.blocks;
+                         // split lines the projection ran across two of the model's blocks (narrow gutters)
+                         crate::resegment::resegment_by_model_blocks(pp);
++                        crate::ocr::ocria::golden::put("resegment.page", serde_json::json!(&pp));
+                     }
+                 }
+             }
+@@ -1205,7 +1215,9 @@ impl LiteParse {
+             t2.duration_since(t_ocr).as_secs_f64() * 1000.0
+         ));
+ 
++        crate::ocr::ocria::golden::put("layout.input", serde_json::json!(&parsed_pages));
+         let laid_out = apply_layout(self, &mut parsed_pages, &outline);
++        crate::ocr::ocria::golden::put("layout.pages", serde_json::json!(&parsed_pages));
+         let mut full_text = if let Some(md) = laid_out {
+             let t3 = web_time::Instant::now();
+             log(&format!(
+@@ -1223,8 +1235,10 @@ impl LiteParse {
+         if self.config.output_format == crate::config::OutputFormat::Markdown {
+             stages::canonicalize_image_refs(&mut parsed_pages, &mut full_text, &images);
+         }
++        crate::ocr::ocria::golden::put("layout.text", serde_json::json!(&full_text));
+         // Last geometry stage: projection and layout ran on upright OCR items.
+         stages::rotate_back_ocr_deskew(&mut parsed_pages);
++        crate::ocr::ocria::golden::put("final.pages", serde_json::json!(&parsed_pages));
+ 
+         let total = web_time::Instant::now().duration_since(t0).as_secs_f64() * 1000.0;
+         log(&format!("[liteparse] total: {:.1}ms", total));
+diff --git a/crates/liteparse/src/projection.rs b/crates/liteparse/src/projection.rs
+index 08fb98c..baebb79 100644
+--- a/crates/liteparse/src/projection.rs
++++ b/crates/liteparse/src/projection.rs
+@@ -1208,7 +1208,7 @@ fn projection_dump_enabled() -> bool {
+ 
+ /// Per-item projection signals of one page, kept in memory for the table model
+ /// (`table_model`).
+-#[derive(Clone, Debug, Default)]
++#[derive(serde::Serialize, Clone, Debug, Default)]
+ pub struct ProjSignals {
+     pub width: f32,
+     pub height: f32,
+@@ -1218,7 +1218,7 @@ pub struct ProjSignals {
+     pub leaves: Vec<([f32; 4], Vec<u16>)>,
+ }
+ 
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct ProjSignalItem {
+     pub text: String,
+     pub bx: [f32; 4],
+diff --git a/crates/liteparse/src/table_model/decode.rs b/crates/liteparse/src/table_model/decode.rs
+index 4cea4b6..ac6d083 100644
+--- a/crates/liteparse/src/table_model/decode.rs
++++ b/crates/liteparse/src/table_model/decode.rs
+@@ -10,7 +10,7 @@
+ use super::net::Logits;
+ 
+ /// A text unit as the decoder sees it: box in the text's reading frame (points, top-left origin).
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct DUnit {
+     pub bx: [f64; 4],
+     pub text: String,
+@@ -23,7 +23,7 @@ pub const STACK_GAP_HDR: f64 = 0.8;
+ pub const GATE: f64 = 3.0;
+ 
+ /// Decoder switches (options of the reference decoder; these are the shipped defaults).
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct DecodeOptions {
+     pub table_thresh: f32,
+     pub head_band: bool,
+@@ -496,7 +496,7 @@ pub fn decode_tables(units: &[DUnit], l: &Logits, opt: &DecodeOptions) -> Vec<Ve
+ }
+ 
+ /// A placed grid cell (top-left slot, span ends, text, box).
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct GridCell {
+     pub r0: usize,
+     pub c0: usize,
+@@ -507,7 +507,7 @@ pub struct GridCell {
+ }
+ 
+ /// A decoded table: cells in placement order, the header rows, and the grid size.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct Grid {
+     pub cells: Vec<GridCell>,
+     pub head_rows: Vec<usize>,
+diff --git a/crates/liteparse/src/table_model/features.rs b/crates/liteparse/src/table_model/features.rs
+index 1bf4ca4..1a1d8bf 100644
+--- a/crates/liteparse/src/table_model/features.rs
++++ b/crates/liteparse/src/table_model/features.rs
+@@ -3,7 +3,7 @@
+ //! 8 LiteParse projection signals, 5 ruling-line flags, then block id and leaf id.
+ 
+ /// LiteParse's grid-projection signals for one unit (absent when no projected item matched it).
+-#[derive(Clone, Debug, Default)]
++#[derive(serde::Serialize, Clone, Debug, Default)]
+ pub struct Proj {
+     /// Text the text features read instead of the unit's own (an OCR faint-token read).
+     pub feat_text: Option<String>,
+@@ -18,7 +18,7 @@ pub struct Proj {
+ 
+ /// A text unit with what the features need. `bx` is in the text's reading frame, `pbox` on the
+ /// rendered page (they differ only for sideways text); points, top-left origin.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct FUnit {
+     pub bx: [f32; 4],
+     pub pbox: [f32; 4],
+@@ -29,7 +29,7 @@ pub struct FUnit {
+ }
+ 
+ /// Ruling lines in page points: horizontal `[y, x0, x1]`, vertical `[x, y0, y1]`.
+-#[derive(Clone, Debug, Default)]
++#[derive(serde::Serialize, Clone, Debug, Default)]
+ pub struct Rules {
+     pub h: Vec<[f32; 3]>,
+     pub v: Vec<[f32; 3]>,
+@@ -498,10 +498,11 @@ pub fn page_rules(page: &pdfium::Page) -> Option<Rules> {
+ 
+ /// A page rendered for the image branch: grey (0 = black) with its longest side
+ /// `net::IMG_SIDE`, and its pixels per PDF point.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct PageImage {
+     pub w: usize,
+     pub h: usize,
++    #[serde(serialize_with = "crate::ocr::ocria::golden::ser_sha")]
+     pub px: Vec<u8>,
+     pub k: f32,
+ }
+@@ -637,6 +638,23 @@ impl std::fmt::Debug for RawRaster {
+ 
+ /// Render the page at `RULES_DPI` and copy its pixels out.
+ pub fn render_raw(page: &pdfium::Page) -> Option<RawRaster> {
++    // ppu-ocria-nano goldens (scratch clone only): an image page's render is the image itself,
++    // area-resampled to the RULES_DPI size, in PDFium's BGR channel order
++    if let Some(path) = std::env::var_os("OCRIA_RAW_IMAGE") {
++        let scale = RULES_DPI / 72.0;
++        let (w, h) = ((page.width() * scale).round() as usize, (page.height() * scale).round() as usize);
++        let img = crate::ocr::OcrImage::from_file(path.to_str()?).ok()?;
++        let (iw, ih) = img.dimensions();
++        let px = img.pixels(false).ok()?.into_owned();
++        let src = crate::ocr::ocria::img::Img { w: iw as usize, h: ih as usize, ch: 3, data: px };
++        let r = crate::ocr::ocria::img::resize_area(&src, w, h);
++        let mut buf = Vec::with_capacity(w * h * 3);
++        for p in r.data.chunks_exact(3) {
++            buf.extend_from_slice(&[p[2], p[1], p[0]]);
++        }
++        crate::ocr::ocria::golden::put("table.raw", serde_json::json!({"w": w, "h": h, "sha": crate::ocr::ocria::golden::hash(&buf)}));
++        return Some(RawRaster { w, h, stride: w * 3, bpp: 3, buf });
++    }
+     let bmp = page.render(RULES_DPI).ok()?;
+     Some(RawRaster {
+         w: bmp.width() as usize,
+diff --git a/crates/liteparse/src/table_model/mod.rs b/crates/liteparse/src/table_model/mod.rs
+index a4b4084..1b394b8 100644
+--- a/crates/liteparse/src/table_model/mod.rs
++++ b/crates/liteparse/src/table_model/mod.rs
+@@ -33,7 +33,7 @@ pub const MAX_UNITS: usize = 1500;
+ 
+ /// What the model needs from an open PDFium page (built while the document is open: PDFium
+ /// isn't thread-safe), joined later with that page's projection signals.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct PageInput {
+     pub units: Vec<units::Unit>,
+     /// rendered page size in points
+@@ -43,6 +43,7 @@ pub struct PageInput {
+     pub ocr: bool,
+     /// the page for a model with an image branch
+     pub img: Option<features::PageImage>,
++    #[serde(skip)]
+     /// the page render, when `rules` / `img` are left to `run_page` (on the parallel workers,
+     /// off the PDFium lock); with the (rules, img) wanted from it
+     raw: Option<(features::RawRaster, bool, bool)>,
+@@ -170,7 +171,7 @@ fn faint_mask(t: &str) -> String {
+ 
+ /// One unit's block class probabilities (layout models): its box on the page (points, top-left
+ /// origin), character count, and softmax over `BLOCK_CLASSES`.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct UnitClass {
+     pub bbox: crate::types::Rect,
+     pub chars: usize,
+@@ -196,7 +197,7 @@ pub const BLOCK_CLASSES: [&str; 13] = [
+ 
+ /// A layout block from a joint model: units grouped by the same_block
+ /// head, labelled by their summed class probabilities.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct ModelBlock {
+     pub bbox: crate::types::Rect,
+     /// index into BLOCK_CLASSES
+@@ -207,7 +208,7 @@ pub struct ModelBlock {
+ 
+ /// What the model found on a page: its tables and (layout models) every unit's block class and
+ /// its layout blocks.
+-#[derive(Clone, Debug, Default)]
++#[derive(serde::Serialize, Clone, Debug, Default)]
+ pub struct PageModel {
+     pub tables: Vec<ModelTable>,
+     pub classes: Vec<UnitClass>,
+@@ -346,7 +347,7 @@ fn block_groups(l: &net::Logits, keep: &[usize]) -> Vec<Vec<usize>> {
+ }
+ 
+ /// A decoded table: its grid and its box on the page (points, top-left origin).
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct ModelTable {
+     pub bbox: crate::types::Rect,
+     pub grid: decode::Grid,
+@@ -617,6 +618,7 @@ fn run_page_framed(
+     let deferred = input.raster();
+     let rules = input.rules.as_ref().or(deferred.0.as_ref());
+     let page_img = input.img.as_ref().or(deferred.1.as_ref());
++    crate::ocr::ocria::golden::put("table.raster", serde_json::json!({"rules": rules, "img": page_img}));
+     let feats = features::unit_features(&fu, wh, rules);
+     let pairf = match rules {
+         Some(r) => features::pair_rule_features(&fu.iter().map(|u| u.pbox).collect::<Vec<_>>(), r),
+@@ -625,7 +627,14 @@ fn run_page_framed(
+     let img = page_img
+         .filter(|_| net.has_img() || layout_net.is_some_and(|l| l.has_img()))
+         .map(|im| im.input(&fu.iter().map(|u| u.pbox).collect::<Vec<_>>()));
++    {
++        use crate::ocr::ocria::golden as gd;
++        gd::put("table.units", serde_json::json!({"units": &*units, "fu": &fu}));
++        gd::put("table.feats", serde_json::json!({"n": n, "feats": &feats, "pairf": &pairf,
++            "img": img.as_ref().map(|i| serde_json::json!({"canvas_sha": gd::hash(&i.canvas.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>()), "boxes": i.boxes, "valid": i.valid}))}));
++    }
+     let mut logits = net.forward(&feats, &pairf, n, img.as_ref());
++    crate::ocr::ocria::golden::put("table.logits", serde_json::json!(&logits));
+     let minor: Vec<bool> = units.iter().map(|u| u.minor).collect();
+     mask_minor(&mut logits, &minor);
+     let du: Vec<decode::DUnit> = units
+diff --git a/crates/liteparse/src/table_model/net.rs b/crates/liteparse/src/table_model/net.rs
+index d8a11c0..be7ca5d 100644
+--- a/crates/liteparse/src/table_model/net.rs
++++ b/crates/liteparse/src/table_model/net.rs
+@@ -403,6 +403,7 @@ impl OnnxBackend {
+ 
+ /// Node logits [n, 2], pair logits [4, n, n] (row-major) and, from a layout model, block class
+ /// logits [n, n_cls] (empty otherwise).
++#[derive(serde::Serialize)]
+ pub struct Logits {
+     pub n: usize,
+     pub node: Vec<f32>,
+diff --git a/crates/liteparse/src/table_model/units.rs b/crates/liteparse/src/table_model/units.rs
+index 71311e1..0744840 100644
+--- a/crates/liteparse/src/table_model/units.rs
++++ b/crates/liteparse/src/table_model/units.rs
+@@ -15,7 +15,7 @@ const NUM_GAP: f64 = 0.5;
+ const ADAPT_X: f64 = 2.5;
+ const ADAPT_MIN: f64 = 0.6;
+ 
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ pub struct Unit {
+     /// reading-frame box
+     pub bx: [f64; 4],
+@@ -34,7 +34,7 @@ pub struct Unit {
+ }
+ 
+ /// One character: code unit(s), rendered-page box, font size, bold.
+-#[derive(Clone, Debug)]
++#[derive(serde::Serialize, Clone, Debug)]
+ struct Ch {
+     c: Vec<u32>,
+     pb: [f64; 4],
+diff --git a/crates/liteparse/src/types.rs b/crates/liteparse/src/types.rs
+index 4a763b1..a6f23ae 100644
+--- a/crates/liteparse/src/types.rs
++++ b/crates/liteparse/src/types.rs
+@@ -142,12 +142,12 @@ pub struct TextItem {
+     /// The pieces an item was merged from, when their emphasis differs (bold / italic / struck /
+     /// monospace / underline / script): the markdown renderer styles each piece, while lines,
+     /// tables and blocks see the one merged item. Empty otherwise. Internal.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub style_pieces: Vec<TextItem>,
+     /// A super/subscript run split from its line at a size step: its own glyph box `(y, height)`.
+     /// `y` / `height` then hold the host text's band, so lines and tables group the run with its
+     /// host as before the split; script detection reads this box. Internal.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub script_geom: Option<(f32, f32)>,
+     /// Whether this item is LaTeX rebuilt from TeX math fonts (`$…$`).
+     /// Populated in `extract.rs`.
+@@ -164,7 +164,7 @@ pub struct TextItem {
+     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+     pub words: Vec<WordBox>,
+     /// Read by ocria-nano's faint-token pass (see `OcrResult::faint`); internal only.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub ocr_faint: bool,
+ }
+ 
+@@ -519,15 +519,15 @@ pub struct ParsedPage {
+     pub projected_item_frames: Vec<(Rect, Rect)>,
+     /// Tables decoded by the learned table model (`table_model`) when it is enabled; the
+     /// markdown classifier emits them and drops the lines they cover. Not serialized.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub model_tables: Vec<crate::table_model::ModelTable>,
+     /// Block class per unit from a joint layout model (`table_model`), for markdown heading
+     /// decisions; empty without one.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub model_classes: Vec<crate::table_model::UnitClass>,
+     /// Layout blocks from the table model's block head; they replace the heuristic text
+     /// blocks in `blocks`. Empty otherwise.
+-    #[serde(skip)]
++    #[serde(skip_deserializing)]
+     pub model_blocks: Vec<crate::table_model::ModelBlock>,
+     /// Structure-tree nodes for this page (tagged PDFs only). Pre-flattened in
+     /// pre-order. Consumed by the markdown classifier for highest-priority

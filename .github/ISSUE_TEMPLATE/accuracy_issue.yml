@@ -1,0 +1,105 @@
+name: Accuracy / OCR quality issue
+description: OCR output is wrong, incomplete, or worse than a previous version.
+title: "accuracy: "
+labels: ["accuracy", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For accuracy issues it usually helps to know:
+        1. Whether the input is an **image**, a **scanned PDF**, or a **digital PDF** (and the PDF `mode`).
+        2. Which stage goes wrong: orientation or skew, **detection** (wrong boxes, missing text), **recognition**
+           (right box, wrong characters), reading order or layout, or the markdown.
+        3. A sample we can reproduce with.
+
+        Check the README's Limitations first: OCRia-nano-1 does not read handwriting, complex tables, or scripts
+        outside its list on scans. Those are model limits, not library bugs.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Describe the accuracy issue
+      description: What text should have been detected? What did ppu-ocria-nano return instead?
+      placeholder: |
+        The word "Rp1,500,000" is detected but recognised as "Rp1.500.000"
+        (comma -> dot). This is a receipt from an Indonesian store.
+    validations:
+      required: true
+
+  - type: textarea
+    id: image
+    attributes:
+      label: Sample image
+      description: |
+        Attach the image, or link to a reproduction. If the image contains sensitive data,
+        please redact everything except the failing region.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage is failing?
+      options:
+        - Detection - boxes are wrong, missing, or overlapping
+        - Recognition - boxes are right, characters are wrong
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage that goes wrong
+      options:
+        - orientation or skew
+        - detection (boxes)
+        - recognition (characters)
+        - reading order or layout blocks
+        - markdown or tables
+        - PDF text layer
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Options used
+      description: Default models, or custom ones? Was layout off, or keepHeadersFooters on?
+      placeholder: "default models, { layout: false }, convertPdf dpi 250"
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language / script of the text
+      placeholder: e.g. Indonesian (Latin), Thai, Japanese + Latin
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ppu-ocria-nano version
+      placeholder: "5.2.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Is this a regression?
+      description: Did this image work on an earlier version? If yes, which one?
+      placeholder: "Worked on 5.1.1, broke on 5.2.0."
+
+  - type: textarea
+    id: preprocessing
+    attributes:
+      label: Pre-processing applied
+      description: |
+        Did you grayscale, threshold, deskew, or otherwise transform the image before passing it in?
+        Paste the relevant code if so.
+      render: ts

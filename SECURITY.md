@@ -79,9 +79,10 @@ above.
 
 We keep the dependency tree deliberate. A new runtime dependency is added only
 when it is necessary, actively maintained, and carries an OSI- or FSF-approved
-license. The runtime dependencies are `ppu-ocv` (preprocessing) and the
-`onnxruntime-*` packages (inference), declared in `package.json` and pinned in
-`bun.lock`. GitHub Actions are pinned to commit SHAs. Dependabot opens update
+license. The runtime dependencies are `ppu-ocv` (image decoding), `bidi-js`
+(right-to-left text order) and the `onnxruntime-*` packages (inference),
+declared in `package.json` and pinned in `bun.lock`. PDF input runs pdfium as
+WebAssembly, built from a sha256-pinned archive (`scripts/pdfium/build.sh`). GitHub Actions are pinned to commit SHAs. Dependabot opens update
 pull requests weekly for both npm packages and Actions, and CI re-verifies the
 lockfile on every pull request.
 

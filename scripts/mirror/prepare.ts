@@ -27,10 +27,23 @@ if (!out) throw new Error("usage: bun scripts/mirror/prepare.ts <out-dir>");
 const dir = join(out, `v${MODEL_VERSION}`);
 mkdirSync(dir, { recursive: true });
 
-async function download(url: string): Promise<ArrayBuffer> {
+async function fetchOnce(url: string): Promise<ArrayBuffer> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   return res.arrayBuffer();
+}
+
+// Bun 1.4.2 drops a connection to Hugging Face part way through a run of
+// downloads (ECONNRESET); the same file downloads on a second try.
+async function download(url: string): Promise<ArrayBuffer> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fetchOnce(url);
+    } catch (error) {
+      if (attempt === 3) throw error;
+      console.warn(`retry ${url}: ${String(error)}`);
+    }
+  }
 }
 
 for (const file of Object.keys(MODEL_FILES) as ModelFile[]) {

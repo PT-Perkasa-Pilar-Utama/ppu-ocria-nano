@@ -1,7 +1,7 @@
 ---
 license: other
 license_name: ocria-nano-1-license
-license_link: v1.0.0/LICENSE
+license_link: https://huggingface.co/snowfluke/ppu-ocria-nano-models/blob/main/v1.0.0/LICENSE
 tags:
   - onnx
   - ocr

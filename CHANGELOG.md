@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-25
 
 First release: OCRia-nano-1 v1.0.0 through a TypeScript port of LiteParse
 crates-v2.21.2.
@@ -39,3 +39,6 @@ crates-v2.21.2.
 - CLI `ppu-ocria-nano` (`convert`, `detect`, `download-models`,
   `clear-cache`, `models`), the REST server in `apps/serve`, and the
   playground.
+
+[Unreleased]: https://github.com/PT-Perkasa-Pilar-Utama/ppu-ocria-nano/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/PT-Perkasa-Pilar-Utama/ppu-ocria-nano/releases/tag/v0.1.0

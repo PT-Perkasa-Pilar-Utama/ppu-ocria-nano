@@ -2612,6 +2612,8 @@
       let input = null;
       let sourceCanvas = null;
       let pdfBytes = null;
+      /** The converted PDF, open in pdfium so each page shown can be rendered; null otherwise. */
+      let previewDoc = null;
       let pages = [];
       let pageIndex = 0;
       /** Milliseconds the last convert took, for the whole input. */
@@ -2759,6 +2761,9 @@
         jsonResult.textContent = "// Inference output will appear here";
         const ctx = overlayCanvas.getContext("2d");
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        // the document holds the PDF bytes in the pdfium heap until it is closed
+        previewDoc?.close();
+        previewDoc = null;
       }
 
       // -- Zoom --
@@ -2856,30 +2861,37 @@
         canvasTools.hidden = false;
       }
 
-      /**
-       * A PDF page has no raster here, so the preview is a blank sheet of the
-       * page's size with its text placed where the reader found it.
-       */
-      function pdfPreview(page) {
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(page.width * PDF_PREVIEW_SCALE));
-        canvas.height = Math.max(1, Math.round(page.height * PDF_PREVIEW_SCALE));
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#8a7a5f";
-        ctx.textBaseline = "alphabetic";
-        for (const item of page.items) {
-          const size = Math.max(4, (item.fontSize ?? item.height) * PDF_PREVIEW_SCALE);
-          ctx.font = `${size}px system-ui, sans-serif`;
-          ctx.fillText(
-            item.text,
-            item.x * PDF_PREVIEW_SCALE,
-            (item.y + item.height) * PDF_PREVIEW_SCALE,
-            Math.max(1, item.width * PDF_PREVIEW_SCALE)
-          );
+      /** Page `index` of the converted PDF, rendered by the pdfium build that read it. */
+      function pdfPreview(index) {
+        const page = previewDoc.page(index);
+        let bitmap = null;
+        try {
+          bitmap = page.render(PDF_PREVIEW_SCALE * 72);
+          const width = bitmap.width();
+          const height = bitmap.height();
+          const stride = bitmap.stride();
+          // pdfium writes BGRA rows of `stride` bytes; ImageData wants packed RGBA
+          const src = bitmap.buffer();
+          const image = new ImageData(width, height);
+          const dst = image.data;
+          let o = 0;
+          for (let y = 0; y < height; y++) {
+            for (let i = y * stride, end = i + width * 4; i < end; i += 4, o += 4) {
+              dst[o] = src[i + 2];
+              dst[o + 1] = src[i + 1];
+              dst[o + 2] = src[i];
+              dst[o + 3] = 255;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d").putImageData(image, 0, 0);
+          return canvas;
+        } finally {
+          bitmap?.destroy();
+          page.close();
         }
-        return canvas;
       }
 
       function drawBoxes(page, scale) {
@@ -2956,12 +2968,13 @@
         const page = pages[index];
         if (!page) return;
 
-        const base = input.kind === "pdf" ? pdfPreview(page) : sourceCanvas;
+        const base = input.kind === "pdf" ? pdfPreview(index) : sourceCanvas;
         pageScale = base.width / page.width;
-        drawBase(base);
-        drawBoxes(page, pageScale);
+        // shown before drawBase, because the fit zoom measures the container
         canvasContainer.style.display = "flex";
         resultPlaceholder.style.display = "none";
+        drawBase(base);
+        drawBoxes(page, pageScale);
         boxToggles.hidden = false;
         renderLegend(page);
         canvasPager.hidden = pages.length < 2;
@@ -3565,7 +3578,11 @@
           let result;
           if (input.kind === "pdf") {
             const pdf = await loadPdfModule();
-            result = await pdf.convertPdf(ocrService, pdfBytes, pdfOptionsFromControls());
+            const options = pdfOptionsFromControls();
+            result = await pdf.convertPdf(ocrService, pdfBytes, options);
+            // the same options as convertPdf in a browser, so this is its pdfium instance
+            const pdfium = await pdf.loadPdfium();
+            previewDoc = pdfium.loadDocumentFromBytes(pdfBytes, options.password ?? null);
           } else {
             result = [await ocrService.convert(sourceCanvas)];
           }
